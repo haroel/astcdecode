@@ -213,8 +213,8 @@ namespace basisu
 // Common utilities
             enum
             {
-                MAX_BLOCK_WIDTH		= 12,
-                MAX_BLOCK_HEIGHT	= 12
+                MAX_BLOCK_WIDTH		= 10,
+                MAX_BLOCK_HEIGHT	= 10,
             };
 
 
@@ -283,7 +283,7 @@ namespace basisu
                     case ISEMODE_QUINT:			return deDivRoundUp32(numValues*7, 3) + numValues*iseParams.numBits;
                     case ISEMODE_PLAIN_BIT:		return numValues*iseParams.numBits;
                     default:
-                        DE_ASSERT(false);
+                                DE_ASSERT(false);
                         return -1;
                 }
             }
@@ -434,16 +434,16 @@ namespace basisu
             };
             struct ISEDecodedResult
             {
-                deUint32 m;
-                deUint32 tq; //!< Trit or quint value, depending on ISE mode.
-                deUint32 v;
+                deUint16 m;
+                deUint16 tq; //!< Trit or quint value, depending on ISE mode.
+                deUint16 v;
             };
 
             // Data from an ASTC block's "block mode" part (i.e. bits [0,10]).
             struct ASTCBlockMode
             {
-                int			weightGridWidth;
-                int			weightGridHeight;
+                deUint16			weightGridWidth;
+                deUint16			weightGridHeight;
                 bool		isError;
                 // \note Following fields only relevant if !isError.
                 bool		isVoidExtent;
@@ -603,10 +603,10 @@ namespace basisu
 #endif
             DecompressResult decodeVoidExtentBlock (void* dst, const Block128& blockData, int blockWidth, int blockHeight, bool isSRGB, bool isLDRMode)
             {
-                const deUint32	minSExtent			= blockData.getBits(12, 24);
-                const deUint32	maxSExtent			= blockData.getBits(25, 37);
-                const deUint32	minTExtent			= blockData.getBits(38, 50);
-                const deUint32	maxTExtent			= blockData.getBits(51, 63);
+                deUint32	minSExtent			= blockData.getBits(12, 24);
+                deUint32	maxSExtent			= blockData.getBits(25, 37);
+                deUint32	minTExtent			= blockData.getBits(38, 50);
+                deUint32	maxTExtent			= blockData.getBits(51, 63);
                 const bool		allExtentsAllOnes	= minSExtent == 0x1fff && maxSExtent == 0x1fff && minTExtent == 0x1fff && maxTExtent == 0x1fff;
 //                const bool		isHDRBlock			= blockData.isBitSet(9);
 #if ASTC_ERROR_COLOR_BLOCK ==1
@@ -616,28 +616,38 @@ namespace basisu
                     return DECOMPRESS_RESULT_ERROR;
                 }
 #endif
-                const deUint32 rgba[4] =
-                        {
-                                blockData.getBits(64,  79),
-                                blockData.getBits(80,  95),
-                                blockData.getBits(96,  111),
-                                blockData.getBits(112, 127)
-                        };
-                int block_size = blockWidth*blockHeight;
+                minSExtent = blockData.getBits(64,  79);
+                maxSExtent = blockData.getBits(80,  95);
+                minTExtent = blockData.getBits(96,  111);
+                maxTExtent = blockData.getBits(112, 127);
+                deUint8 block_size = blockWidth*blockHeight;
                 if (isSRGB)
                 {
+                    minSExtent =  ( minSExtent & 0xff00) >> 8;
+                    maxSExtent =  ( minSExtent & 0xff00) >> 8;
+                    minTExtent =  ( minSExtent & 0xff00) >> 8;
+                    maxTExtent =  ( minSExtent & 0xff00) >> 8;
                     deUint8* const dstU = (deUint8*)dst;
-                    for (int i = 0; i < block_size; i++)
-                        for (int c = 0; c < 4; c++)
-                            dstU[i*4 + c] = (deUint8)((rgba[c] & 0xff00) >> 8);
-                }
-                else
-                {
+                    for (deUint8 i = 0; i < block_size; i++){
+                        dstU[i*4 + 0] = minSExtent;
+                        dstU[i*4 + 1] = maxSExtent;
+                        dstU[i*4 + 2] = minTExtent;
+                        dstU[i*4 + 3] = maxTExtent;
+                    }
+                } else {
+                    float rgba[4] =
+                            {
+                                    minSExtent >= 65535?1.0f:(float)minSExtent *BC_65536,
+                                    maxSExtent >= 65535?1.0f:(float)maxSExtent *BC_65536,
+                                    minTExtent >= 65535?1.0f:(float)minTExtent *BC_65536,
+                                    maxTExtent >= 65535?1.0f:(float)maxTExtent *BC_65536,
+                            };
                     float* const dstF = (float*)dst;
-                    for (int i = 0; i < block_size; i++){
-                        for (int c = 0; c < 4; c++){
-                            dstF[i*4 + c] = rgba[c] == 65535 ? 1.0f : (float)rgba[c] *BC_65536;
-                        }
+                    for (deUint8 i = 0; i < block_size; i++){
+                        dstF[i*4 + 0] = rgba[0];
+                        dstF[i*4 + 1] = rgba[1];
+                        dstF[i*4 + 2] = rgba[2];
+                        dstF[i*4 + 3] = rgba[3];
                     }
                 }
                 return DECOMPRESS_RESULT_VALID_BLOCK;
@@ -659,9 +669,9 @@ namespace basisu
                     {
                         for (int partNdx = 0; partNdx < numPartitions; partNdx++)
                         {
-                             deUint32 cemClass		= highLevelSelector - (blockData.isBitSet(25 + partNdx) ? 0 : 1);
-                             deUint32 lowBit0Ndx	= numPartitions + (partNdx<<1);
-                             deUint32 lowBit1Ndx	= numPartitions + (partNdx<<1) + 1;
+                            deUint32 cemClass		= highLevelSelector - (blockData.isBitSet(25 + partNdx) ? 0 : 1);
+                            deUint32 lowBit0Ndx	= numPartitions + (partNdx<<1);
+                            deUint32 lowBit1Ndx	= numPartitions + (partNdx<<1) + 1;
 //                             deUint32 lowBit0		= blockData.getBit(lowBit0Ndx < 4 ? 25+lowBit0Ndx : extraCemBitsStart+lowBit0Ndx-4);
 //                             deUint32 lowBit1		= blockData.getBit(lowBit1Ndx < 4 ? 25+lowBit1Ndx : extraCemBitsStart+lowBit1Ndx-4);
 //                            endpointModesDst[partNdx] = (cemClass << 2) | (lowBit1 << 1) | lowBit0;
@@ -681,7 +691,7 @@ namespace basisu
             }
             void decodeISETritBlock (ISEDecodedResult* dst, int numValues, BitAccessStream& data, int numBits)
             {
-                deUint32 m[5];
+                deUint16 m[5];
                 m[0]			= data.getNext(numBits);
                 deUint32 T01	= data.getNext(2);
                 m[1]			= data.getNext(numBits);
@@ -701,7 +711,7 @@ namespace basisu
                     case 4: T7		= 0;
                     case 5: break;
                     default:
-                        DE_ASSERT(false);
+                                DE_ASSERT(false);
                 }
                 const deUint16 T = (T7 << 7) | (T56 << 5) | (T4 << 4) | (T23 << 2) | (T01 << 0);
                 static const deUint8 tritsFromT[256][5] =
@@ -747,7 +757,7 @@ namespace basisu
                     case 2: Q56		= 0;
                     case 3: break;
                     default:
-                        DE_ASSERT(false);
+                                DE_ASSERT(false);
                 }
                 const deUint16 Q = (Q56 << 5) | (Q34 << 3) | (Q012 << 0);
                 static const deUint8 quintsFromQ[256][3] =
@@ -804,7 +814,7 @@ namespace basisu
             {
                 if (iseParams.mode == ISEMODE_TRIT || iseParams.mode == ISEMODE_QUINT)
                 {
-                    const int rangeCase				= iseParams.numBits*2 - (iseParams.mode == ISEMODE_TRIT ? 2 : 1);
+                    const deUint8 rangeCase				= iseParams.numBits*2 - (iseParams.mode == ISEMODE_TRIT ? 2 : 1);
                     static const deUint8	Ca[11]	= { 204, 113, 93, 54, 44, 26, 22, 13, 11, 6, 5 };
                     const deUint8			C		= Ca[rangeCase];
                     for (int endpointNdx = 0; endpointNdx < numEndpoints; endpointNdx++)
@@ -914,7 +924,7 @@ namespace basisu
                         case 4: ASSIGN_X_BITS(G,6,  G,5,  B,6,  B,5,   R,6,  R,7,   S,5); break;
                         case 5: ASSIGN_X_BITS(G,6,  G,5,  B,6,  B,5,   R,6,  S,6,   S,5); break;
                         default:
-                            DE_ASSERT(false);
+                                    DE_ASSERT(false);
                     }
 #undef ASSIGN_X_BITS
 #undef SHOR
@@ -935,13 +945,13 @@ namespace basisu
                     std::swap(red, blue);
 
                 e0.set(basisu::clamp(red	- scale,	0, 0xfff),
-                           basisu::clamp(green	- scale,	0, 0xfff),
-                           basisu::clamp(blue	- scale,	0, 0xfff),
-                           0x780);
+                       basisu::clamp(green	- scale,	0, 0xfff),
+                       basisu::clamp(blue	- scale,	0, 0xfff),
+                       0x780);
                 e1.set(basisu::clamp(red,				0, 0xfff),
-                           basisu::clamp(green,				0, 0xfff),
-                           basisu::clamp(blue,				0, 0xfff),
-                           0x780);
+                       basisu::clamp(green,				0, 0xfff),
+                       basisu::clamp(blue,				0, 0xfff),
+                       0x780);
             }
             void decodeHDREndpointMode11 (UVec4& e0, UVec4& e1, deUint32 v0, deUint32 v1, deUint32 v2, deUint32 v3, deUint32 v4, deUint32 v5)
             {
@@ -980,7 +990,7 @@ namespace basisu
                             case 6: ASSIGN_X_BITS(b0,6,  b1,6,   a,11,  c,6,   a,9,   a,10); break;
                             case 7: ASSIGN_X_BITS(a,9,   a,10,   a,11,  c,6,   d0,5,  d1,5); break;
                             default:
-                                DE_ASSERT(false);
+                                        DE_ASSERT(false);
                         }
 #undef ASSIGN_X_BITS
 #undef SHOR
@@ -1197,7 +1207,7 @@ namespace basisu
                             decodeHDREndpointMode15(e0, e1, v[0], v[1], v[2], v[3], v[4], v[5], v[6], v[7]);
                             break;
                         default:
-                            DE_ASSERT(false);
+                                    DE_ASSERT(false);
                     }
                 }
             }
@@ -1227,7 +1237,7 @@ namespace basisu
                         static const deUint8 map0[3]	= { 0, 32, 63 };
                         static const deUint8 map1[5]	= { 0, 16, 32, 47, 63 };
                         const deUint8* const map		= rangeCase == 0 ? &map0[0] : &map1[0];
-                        for (int i = 0; i < numWeights; i++)
+                        for (deUint8 i = 0; i < numWeights; i++)
                         {
                             dst[i] = map[weightGrid[i].v];
                         }
@@ -1267,35 +1277,45 @@ namespace basisu
             void interpolateWeights (TexelWeightPair* dst, const deUint32 (&unquantizedWeights) [64], int blockWidth, int blockHeight, const ASTCBlockMode& blockMode)
             {
                 const deUint8		numWeightsPerTexel	= blockMode.isDualPlane ? 2 : 1;
-                const deUint32	scaleX				= (1024 + (blockWidth>>1)) / (blockWidth-1);
-                const deUint32	scaleY				= (1024 + (blockHeight>>1)) / (blockHeight-1);
-                for (deUint8 texelY = 0; texelY < blockHeight; texelY++)
+                deUint16 	scaleX				= (1024 + (blockWidth>>1)) / (blockWidth-1);
+                deUint16	scaleY				= (1024 + (blockHeight>>1)) / (blockHeight-1);
+                *(&scaleX) = scaleX * (blockMode.weightGridWidth-1);
+                *(&scaleY) = scaleY * (blockMode.weightGridHeight-1);
+                deUint32 temp00;
+                deUint32 temp01;
+                deUint32 temp10;
+                deUint32 temp11;
+                for (deUint8 texelY = 0; texelY < blockHeight; ++texelY)
                 {
-                    for (deUint8 texelX = 0; texelX < blockWidth; texelX++)
+                    for (deUint8 texelX = 0; texelX < blockWidth; ++texelX)
                     {
-                        const deUint32 gX	= (scaleX*texelX*(blockMode.weightGridWidth-1) + 32) >> 6;
-                        const deUint32 gY	= (scaleY*texelY*(blockMode.weightGridHeight-1) + 32) >> 6;
-                        const deUint32 jX	= gX >> 4;
-                        const deUint32 jY	= gY >> 4;
-                        const deUint32 fX	= gX & 0xf;
-                        const deUint32 fY	= gY & 0xf;
-                        const deUint32 w11	= (fX*fY + 8) >> 4;
-                        const deUint32 w10	= fY - w11;
-                        const deUint32 w01	= fX - w11;
-                        const deUint32 w00	= 16 - fX - fY + w11;
-                        const deUint32 i00	= jY*blockMode.weightGridWidth + jX;
-                        const deUint32 i01	= i00 + 1;
-                        const deUint32 i10	= i00 + blockMode.weightGridWidth;
-                        const deUint32 i11	= i00 + blockMode.weightGridWidth + 1;
+                        *(&temp00)	= (scaleX*texelX + 32) >> 6;
+                        *(&temp01)	= (scaleY*texelY + 32) >> 6;
+                        *(&temp10)	= temp00 >> 4;
+                        *(&temp11)	= temp01 >> 4;
+                        *(&temp00)	= temp00 & 0xf;
+                        *(&temp01)	= temp01 & 0xf;
+                        const deUint32 w11	= (temp00*temp01 + 8) >> 4;
+                        const deUint32 w10	= temp01 - w11;
+                        const deUint32 w01	= temp00 - w11;
+                        const deUint32 w00	= 16 - temp00 - temp01 + w11;
+                        deUint32 i00	= temp11*blockMode.weightGridWidth + temp10;
+                        deUint32 i01	= i00 + 1;
+                        deUint32 i10	= i00 + blockMode.weightGridWidth;
+                        deUint32 i11	= i00 + blockMode.weightGridWidth + 1;
+                        i00 *= numWeightsPerTexel;
+                        i01 *= numWeightsPerTexel;
+                        i10 *= numWeightsPerTexel;
+                        i11 *= numWeightsPerTexel;
                         // These addresses can be out of bounds, but respective weights will be 0 then.
-                        for (deUint8 texelWeightNdx = 0; texelWeightNdx < numWeightsPerTexel; texelWeightNdx++)
+                        for (deUint8 texelWeightNdx = 0; texelWeightNdx < numWeightsPerTexel; ++texelWeightNdx)
                         {
                             // & 0x3f clamps address to bounds of unquantizedWeights
-                            const deUint32 p00	= unquantizedWeights[(i00 * numWeightsPerTexel + texelWeightNdx) & 0x3f];
-                            const deUint32 p01	= unquantizedWeights[(i01 * numWeightsPerTexel + texelWeightNdx) & 0x3f];
-                            const deUint32 p10	= unquantizedWeights[(i10 * numWeightsPerTexel + texelWeightNdx) & 0x3f];
-                            const deUint32 p11	= unquantizedWeights[(i11 * numWeightsPerTexel + texelWeightNdx) & 0x3f];
-                            dst[texelY*blockWidth + texelX].w[texelWeightNdx] = (p00*w00 + p01*w01 + p10*w10 + p11*w11 + 8) >> 4;
+                            *(&temp00)	= unquantizedWeights[(i00 + texelWeightNdx) & 0x3f];
+                            *(&temp01)	= unquantizedWeights[(i01 + texelWeightNdx) & 0x3f];
+                            *(&temp10)	= unquantizedWeights[(i10 + texelWeightNdx) & 0x3f];
+                            *(&temp11)	= unquantizedWeights[(i11 + texelWeightNdx) & 0x3f];
+                            dst[texelY*blockWidth + texelX].w[texelWeightNdx] = (temp00*w00 + temp01*w01 + temp10*w10 + temp11*w11 + 8) >> 4;
                         }
                     }
                 }
@@ -1357,11 +1377,11 @@ namespace basisu
                 seed10 = (deUint8)(seed10 * seed10);
                 seed11 = (deUint8)(seed11 * seed11);
                 seed12 = (deUint8)(seed12 * seed12);
-                const int shA = (seed & 2) != 0		? 4		: 5;
-                const int shB = numPartitions == 3	? 6		: 5;
-                const int sh1 = (seed & 1) != 0		? shA	: shB;
-                const int sh2 = (seed & 1) != 0		? shB	: shA;
-                const int sh3 = (seed & 0x10) != 0	? sh1	: sh2;
+                const deUint8 shA = (seed & 2) != 0		? 4		: 5;
+                const deUint8 shB = numPartitions == 3	? 6		: 5;
+                const deUint8 sh1 = (seed & 1) != 0		? shA	: shB;
+                const deUint8 sh2 = (seed & 1) != 0		? shB	: shA;
+                const deUint8 sh3 = (seed & 0x10) != 0	? sh1	: sh2;
                 seed1  = (deUint8)(seed1  >> sh1);
                 seed2  = (deUint8)(seed2  >> sh2);
                 seed3  = (deUint8)(seed3  >> sh1);
@@ -1374,10 +1394,10 @@ namespace basisu
                 seed10 = (deUint8)(seed10 >> sh3);
                 seed11 = (deUint8)(seed11 >> sh3);
                 seed12 = (deUint8)(seed12 >> sh3);
-                const int a =						0x3f & (seed1*x + seed2*y + seed11*z + (rnum >> 14));
-                const int b =						0x3f & (seed3*x + seed4*y + seed12*z + (rnum >> 10));
-                const int c = numPartitions >= 3 ?	0x3f & (seed5*x + seed6*y + seed9*z  + (rnum >>  6))	: 0;
-                const int d = numPartitions >= 4 ?	0x3f & (seed7*x + seed8*y + seed10*z + (rnum >>  2))	: 0;
+                const deUint8 a =						0x3f & (seed1*x + seed2*y + seed11*z + (rnum >> 14));
+                const deUint8 b =						0x3f & (seed3*x + seed4*y + seed12*z + (rnum >> 10));
+                const deUint8 c = numPartitions >= 3 ?	0x3f & (seed5*x + seed6*y + seed9*z  + (rnum >>  6))	: 0;
+                const deUint8 d = numPartitions >= 4 ?	0x3f & (seed7*x + seed8*y + seed10*z + (rnum >>  2))	: 0;
                 return a >= b && a >= c && a >= d	? 0
                                                      : b >= c && b >= d				? 1
                                                                                        : c >= d						? 2
@@ -1397,12 +1417,12 @@ namespace basisu
 //                    if (isHDREndpoint[i])
 //                        return DECOMPRESS_RESULT_ERROR;
 //                }
-
+                int				colorEndpointNdx;
                 for (deUint8 texelY = 0; texelY < blockHeight; texelY++)
                     for (deUint8 texelX = 0; texelX < blockWidth; texelX++)
                     {
                         const deUint8				texelNdx			= texelY*blockWidth + texelX;
-                        const int				colorEndpointNdx	= numPartitions == 1 ? 0 : computeTexelPartition(partitionIndexSeed, texelX, texelY, 0, numPartitions, smallBlock);
+                        colorEndpointNdx	= numPartitions == 1 ? 0 : computeTexelPartition(partitionIndexSeed, texelX, texelY, 0, numPartitions, smallBlock);
                         const UVec4&			e0					= colorEndpoints[colorEndpointNdx].e0;
                         const UVec4&			e1					= colorEndpoints[colorEndpointNdx].e1;
                         const TexelWeightPair&	weight				= texelWeights[texelNdx];
@@ -1410,17 +1430,18 @@ namespace basisu
                         {
                             if (!isHDREndpoint[colorEndpointNdx] || (channelNdx == 3 && colorEndpointModes[colorEndpointNdx] == 14)) // \note Alpha for mode 14 is treated the same as LDR.
                             {
-                                const deUint32 c0	= (e0[channelNdx] << 8) | (isSRGB ? 0x80 : e0[channelNdx]);
-                                const deUint32 c1	= (e1[channelNdx] << 8) | (isSRGB ? 0x80 : e1[channelNdx]);
                                 const deUint32 w	= weight.w[ccs == channelNdx ? 1 : 0];
-//                                const deUint32 c	= (c0*(64-w) + c1*w + 32) / 64;
-                                const deUint32 c	= (c0*(64-w) + c1*w + 32) >> 6;
-                                ((float*)dst)[texelNdx*4 + channelNdx] = c == 65535 ? 1.0f : (float)c *BC_65536;
-
-//                                if (isSRGB)
-//                                    ((deUint8*)dst)[texelNdx*4 + channelNdx] = (deUint8)((c & 0xff00) >> 8);
-//                                else
-//                                    ((float*)dst)[texelNdx*4 + channelNdx] = c == 65535 ? 1.0f : (float)c * BC_65536;
+                                if(isSRGB){
+                                    const deUint32 c0	= (e0[channelNdx] << 8) | 0x80;
+                                    const deUint32 c1	= (e1[channelNdx] << 8) | 0x80;
+                                    const deUint32 c	= (c0*(64-w) + c1*w + 32) >> 6;
+                                    ((deUint8*)dst)[texelNdx*4 + channelNdx] = (deUint8)((c & 0xff00) >> 8);
+                                }else{
+                                    const deUint32 c0	= (e0[channelNdx] << 8) | e0[channelNdx];
+                                    const deUint32 c1	= (e1[channelNdx] << 8) | e1[channelNdx];
+                                    const deUint32 c	= (c0*(64-w) + c1*w + 32) >> 6;
+                                    ((float*)dst)[texelNdx*4 + channelNdx] = c == 65535 ? 1.0f : (float)c *BC_65536;
+                                }
                             }
                         }
 
@@ -1537,6 +1558,7 @@ namespace basisu
                                 blockData, blockWidth, blockHeight, isSRGB, isLDR) != DECOMPRESS_RESULT_VALID_BLOCK){
                 return false;
             }
+            /**
             int pixk = 0;
             int num = blockHeight * blockWidth;
             for (int i=0;i<num;i++){
@@ -1547,45 +1569,60 @@ namespace basisu
                 pDst[pixc + 3] = (uint8_t)(basisu::clamp<int>((int)(linear[pixc + 3] * 65536.0f + .5f), 0, 65535) >> 8);
                 pixk++;
             }
+             **/
             return true;
         }
-
-        uint32_t transferToRGBA( uint8_t *astc_file_data, uint32_t astc_file_size, unsigned char **outRGBA ,uint32_t *outWidth, uint32_t *outHeight ){
+        /**
+         * 将ASTC格式的数据转换为RGBA格式的数据
+         * @param astc_file_data ASTC格式的数据
+         * @param astc_file_size ASTC格式的数据大小
+         * @param outRGBA 输出的RGBA格式的数据
+         * @param outWidth 输出的图像宽度
+         * @param outHeight 输出的图像高度
+         * @return 转换后的RGBA格式的数据大小
+         */
+        uint32_t transferToRGBA(uint8_t *astc_file_data, uint32_t astc_file_size, unsigned char **outRGBA, uint32_t *outWidth, uint32_t *outHeight) {
             int width = astcGetWidth(astc_file_data);
             int height = astcGetHeight(astc_file_data);
             *outWidth = width;
             *outHeight = height;
             uint32_t block_data_len = astc_file_size - ASTC_HEADER_SIZE;
 
-            uint32_t size_rgba = width * height <<2;
-            uint8_t *data_rgba = static_cast<unsigned char *>(malloc(size_rgba * sizeof(unsigned char)));
-            uint8_t k_size_in_bytes = 16;
-            uint8_t block_width = astc_file_data[ASTC_HEADER_MAGIC];
-            uint8_t block_height = astc_file_data[ASTC_HEADER_MAGIC + 1];
-            uint8_t k_bytes_per_pixel_unorm8 = 4;
-            uint8_t row_length = block_width * k_bytes_per_pixel_unorm8;
-            uint8_t block[block_width * block_height << 2];
-            int blocks_wide = (width + block_width - 1) / block_width;
-            int block_index = 0;
+            uint32_t size_rgba = width * height << 2;
+            uint8_t *data_rgba = static_cast<uint8_t *>(malloc(size_rgba * sizeof(uint8_t)));
+            uint8_t k_size_in_bytes = 16;  // 每个ASTC块的大小（字节数）
+            uint8_t block_width = astc_file_data[ASTC_HEADER_MAGIC];  // ASTC块的宽度（像素数）
+            uint8_t block_height = astc_file_data[ASTC_HEADER_MAGIC + 1];  // ASTC块的高度（像素数）
+            uint8_t k_bytes_per_pixel_unorm8 = 4;  // 每个像素的字节数（RGBA格式）
+            uint8_t row_length = block_width * k_bytes_per_pixel_unorm8;  // 每行像素的字节数
+//            uint8_t block[block_width * block_height << 2];  // 存储解压后的ASTC块数据
+            int blocks_wide = (width + block_width - 1) / block_width;  // 一行多少个block块
+            int block_index = 0;  // 当前处理的ASTC块的索引
             // 临时对象
             DataSet dataSet;
+            float *linear = dataSet.linear;
             // astc数据块
-            const uint8_t * astc_data = astc_file_data + ASTC_HEADER_SIZE;
-            for (int i=0;i<block_data_len;i+= k_size_in_bytes ){
-                if (!decompress( dataSet, block,&astc_data[i],false,block_width, block_height )){
-//                            printf("转码失败 %s", path.c_str());
+            const uint8_t *astc_data = astc_file_data + ASTC_HEADER_SIZE;
+            for (int i = 0; i < block_data_len; i += k_size_in_bytes) {
+                if (!decompress(dataSet, nullptr, &astc_data[i], false, block_width, block_height)) {
+                    // 转码失败
                     free(data_rgba);
                     data_rgba = nullptr;
                     return 0;
                 }
-                int block_x = block_index % blocks_wide;
-                int block_y = block_index / blocks_wide;
-                for (uint8_t j = 0;j<block_height;++j){
-                    int py = block_height * block_y + j;
-                    int px = block_width * block_x;
-                    int dst_pixel_pos = (py * width + px) <<2;
-                    int src_pixel_pos = (j * block_width) <<2;
-                    memcpy(&data_rgba[dst_pixel_pos],&block[src_pixel_pos], row_length);
+                int block_x = block_index % blocks_wide;  // 当前ASTC块在图像中的x坐标
+                int block_y = block_index / blocks_wide;  // 当前ASTC块在图像中的y坐标
+                for (uint8_t j = 0; j < block_height; ++j) {
+                    int py = block_height * block_y + j;  // 当前像素在图像中的y坐标
+                    int px = block_width * block_x;  // 当前像素在图像中的x坐标
+                    int dst_pixel_pos = (py * width + px) * 4;  // 当前像素在输出数据中的位置
+                    int src_pixel_pos = (j * block_width) * 4;  // 当前像素在ASTC块中的位置
+                    uint8_t *dist = &data_rgba[dst_pixel_pos];
+                    float *src = &linear[src_pixel_pos];
+                    for (uint8_t t=0;t<row_length;++t){
+                        dist[t] =(uint8_t)(basisu::clamp<int>((int)(src[ t] * 65536.0f + .5f), 0, 65535) >> 8);
+                    }
+//                    memcpy(&data_rgba[dst_pixel_pos], &block[src_pixel_pos], row_length);  // 将当前像素的数据复制到输出数据中
                 }
                 ++block_index;
             }
