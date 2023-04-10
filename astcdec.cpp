@@ -54,8 +54,6 @@ static const uint8_t ASTC_HEADER_SIZE_Y_BEGIN = 10;
 #define ASTC_HEADER_SIZE 16
 #define ASTC_HEADER_MAGIC 4
 
-const float BC_65536 =  1.0/65536.0f;
-
 namespace basisu
 {
     static bool inBounds(int v, int l, int h)
@@ -217,9 +215,6 @@ namespace basisu
                 MAX_BLOCK_HEIGHT	= 10,
             };
 
-
-
-
             inline deUint32 getBit (deUint32 src, int ndx)
             {
                 return (src >> ndx) & 1;
@@ -292,7 +287,6 @@ namespace basisu
                 int curBitsForTritMode		= 6;
                 int curBitsForQuintMode		= 5;
                 int curBitsForPlainBitMode	= 8;
-//                 ISEParams params(ISEMODE_TRIT,0);
                 while (true)
                 {
                     const int tritRange			= curBitsForTritMode > 0		? (3 << curBitsForTritMode) - 1			: -1;
@@ -303,7 +297,8 @@ namespace basisu
                     {
                         params->mode = ISEMODE_TRIT;
                         params->numBits = curBitsForTritMode;
-                        if (computeNumRequiredBits(*params, numValuesInSequence) <= numAvailableBits){
+                        int val = deDivRoundUp32(numValuesInSequence*8, 5) + numValuesInSequence*params->numBits;
+                        if (val <= numAvailableBits){
                             return;
                         }
                         curBitsForTritMode--;
@@ -312,7 +307,8 @@ namespace basisu
                     {
                         params->mode = ISEMODE_QUINT;
                         params->numBits = curBitsForQuintMode;
-                        if (computeNumRequiredBits(*params, numValuesInSequence) <= numAvailableBits){
+                        int val = deDivRoundUp32(numValuesInSequence*7, 3) + numValuesInSequence*params->numBits;
+                        if (val <= numAvailableBits){
                             return;
                         }
                         curBitsForQuintMode--;
@@ -321,7 +317,8 @@ namespace basisu
                     {
                         params->mode = ISEMODE_PLAIN_BIT;
                         params->numBits = curBitsForPlainBitMode;
-                        if (computeNumRequiredBits(*params, numValuesInSequence) <= numAvailableBits){
+                        int val = numValuesInSequence*params->numBits;
+                        if ( val <= numAvailableBits){
                             return;
                         }
                         curBitsForPlainBitMode--;
@@ -428,8 +425,8 @@ namespace basisu
             private:
                 const int			m_startNdxInSrc;
                 const int			m_length;
-                const Block128&		m_src;
                 int					m_ndx;
+                const Block128&		m_src;
                 const bool			m_forward;
             };
             struct ISEDecodedResult
@@ -603,52 +600,42 @@ namespace basisu
 #endif
             DecompressResult decodeVoidExtentBlock (void* dst, const Block128& blockData, int blockWidth, int blockHeight, bool isSRGB, bool isLDRMode)
             {
-                deUint32	minSExtent			= blockData.getBits(12, 24);
-                deUint32	maxSExtent			= blockData.getBits(25, 37);
-                deUint32	minTExtent			= blockData.getBits(38, 50);
-                deUint32	maxTExtent			= blockData.getBits(51, 63);
-                const bool		allExtentsAllOnes	= minSExtent == 0x1fff && maxSExtent == 0x1fff && minTExtent == 0x1fff && maxTExtent == 0x1fff;
-//                const bool		isHDRBlock			= blockData.isBitSet(9);
+
 #if ASTC_ERROR_COLOR_BLOCK ==1
+                int	minSExtent			= blockData.getBits(12, 24);
+                int	maxSExtent			= blockData.getBits(25, 37);
+                int	minTExtent			= blockData.getBits(38, 50);
+                int	maxTExtent			= blockData.getBits(51, 63);
+                const bool		allExtentsAllOnes	= minSExtent == 0x1fff && maxSExtent == 0x1fff && minTExtent == 0x1fff && maxTExtent == 0x1fff;
+                const bool		isHDRBlock			= blockData.isBitSet(9);
                 if ((isLDRMode && isHDRBlock) || (!allExtentsAllOnes && (minSExtent >= maxSExtent || minTExtent >= maxTExtent)))
                 {
                     setASTCErrorColorBlock(dst, blockWidth, blockHeight, isSRGB);
                     return DECOMPRESS_RESULT_ERROR;
                 }
 #endif
-                minSExtent = blockData.getBits(64,  79);
-                maxSExtent = blockData.getBits(80,  95);
-                minTExtent = blockData.getBits(96,  111);
-                maxTExtent = blockData.getBits(112, 127);
-                deUint8 block_size = blockWidth*blockHeight;
-                if (isSRGB)
-                {
+                int minSExtent = blockData.getBits(64,  79);
+                int maxSExtent = blockData.getBits(80,  95);
+                int minTExtent = blockData.getBits(96,  111);
+                int maxTExtent = blockData.getBits(112, 127);
+                if (isSRGB) {
                     minSExtent =  ( minSExtent & 0xff00) >> 8;
                     maxSExtent =  ( minSExtent & 0xff00) >> 8;
                     minTExtent =  ( minSExtent & 0xff00) >> 8;
                     maxTExtent =  ( minSExtent & 0xff00) >> 8;
-                    deUint8* const dstU = (deUint8*)dst;
-                    for (deUint8 i = 0; i < block_size; i++){
-                        dstU[i*4 + 0] = minSExtent;
-                        dstU[i*4 + 1] = maxSExtent;
-                        dstU[i*4 + 2] = minTExtent;
-                        dstU[i*4 + 3] = maxTExtent;
-                    }
                 } else {
-                    float rgba[4] =
-                            {
-                                    minSExtent >= 65535?1.0f:(float)minSExtent *BC_65536,
-                                    maxSExtent >= 65535?1.0f:(float)maxSExtent *BC_65536,
-                                    minTExtent >= 65535?1.0f:(float)minTExtent *BC_65536,
-                                    maxTExtent >= 65535?1.0f:(float)maxTExtent *BC_65536,
-                            };
-                    float* const dstF = (float*)dst;
-                    for (deUint8 i = 0; i < block_size; i++){
-                        dstF[i*4 + 0] = rgba[0];
-                        dstF[i*4 + 1] = rgba[1];
-                        dstF[i*4 + 2] = rgba[2];
-                        dstF[i*4 + 3] = rgba[3];
-                    }
+                    minSExtent = minSExtent>=65535 ? 255: (minSExtent >> 8);
+                    maxSExtent = maxSExtent>=65535 ? 255: (maxSExtent >> 8);
+                    minTExtent = minTExtent>=65535 ? 255: (minTExtent >> 8);
+                    maxTExtent = maxTExtent>=65535 ? 255: (maxTExtent >> 8);
+                }
+                deUint8* const dstU = (deUint8*)dst;
+                deUint8 block_size = blockWidth*blockHeight;
+                for (deUint8 i = 0; i < block_size; i++){
+                    dstU[i*4 + 0] = minSExtent;
+                    dstU[i*4 + 1] = maxSExtent;
+                    dstU[i*4 + 2] = minTExtent;
+                    dstU[i*4 + 3] = maxTExtent;
                 }
                 return DECOMPRESS_RESULT_VALID_BLOCK;
             }
@@ -743,7 +730,7 @@ namespace basisu
             }
             void decodeISEQuintBlock (ISEDecodedResult* dst, int numValues, BitAccessStream& data, int numBits)
             {
-                deUint32 m[3];
+                deUint16 m[3];
                 m[0]			= data.getNext(numBits);
                 deUint32 Q012	= data.getNext(3);
                 m[1]			= data.getNext(numBits);
@@ -1279,8 +1266,8 @@ namespace basisu
                 const deUint8		numWeightsPerTexel	= blockMode.isDualPlane ? 2 : 1;
                 deUint16 	scaleX				= (1024 + (blockWidth>>1)) / (blockWidth-1);
                 deUint16	scaleY				= (1024 + (blockHeight>>1)) / (blockHeight-1);
-                *(&scaleX) = scaleX * (blockMode.weightGridWidth-1);
-                *(&scaleY) = scaleY * (blockMode.weightGridHeight-1);
+                scaleX = scaleX * (blockMode.weightGridWidth-1);
+                scaleY = scaleY * (blockMode.weightGridHeight-1);
                 deUint32 temp00;
                 deUint32 temp01;
                 deUint32 temp10;
@@ -1341,16 +1328,8 @@ namespace basisu
                 p ^= p <<  6;	p ^= p >> 17;
                 return p;
             }
-            int computeTexelPartition (deUint32 seedIn, deUint32 xIn, deUint32 yIn, deUint32 zIn, int numPartitions, bool smallBlock)
-            {
-                deUint32	x		= xIn;
-                deUint32	y		= yIn;
-                deUint32	z		= zIn;
-                if (smallBlock){
-                    x = x<<1;
-                    y = y<<1;
-                    z = z<<1;
-                }
+
+            deUint32 caculateSeeds( deUint8 * seeds,deUint32 seedIn, int numPartitions ){
                 const deUint32	seed	= seedIn + ((numPartitions-1) << 10);
                 const deUint32	rnum	= hash52(seed);
                 deUint8			seed1	= (deUint8)( rnum							& 0xf);
@@ -1382,22 +1361,27 @@ namespace basisu
                 const deUint8 sh1 = (seed & 1) != 0		? shA	: shB;
                 const deUint8 sh2 = (seed & 1) != 0		? shB	: shA;
                 const deUint8 sh3 = (seed & 0x10) != 0	? sh1	: sh2;
-                seed1  = (deUint8)(seed1  >> sh1);
-                seed2  = (deUint8)(seed2  >> sh2);
-                seed3  = (deUint8)(seed3  >> sh1);
-                seed4  = (deUint8)(seed4  >> sh2);
-                seed5  = (deUint8)(seed5  >> sh1);
-                seed6  = (deUint8)(seed6  >> sh2);
-                seed7  = (deUint8)(seed7  >> sh1);
-                seed8  = (deUint8)(seed8  >> sh2);
-                seed9  = (deUint8)(seed9  >> sh3);
-                seed10 = (deUint8)(seed10 >> sh3);
-                seed11 = (deUint8)(seed11 >> sh3);
-                seed12 = (deUint8)(seed12 >> sh3);
-                const deUint8 a =						0x3f & (seed1*x + seed2*y + seed11*z + (rnum >> 14));
-                const deUint8 b =						0x3f & (seed3*x + seed4*y + seed12*z + (rnum >> 10));
-                const deUint8 c = numPartitions >= 3 ?	0x3f & (seed5*x + seed6*y + seed9*z  + (rnum >>  6))	: 0;
-                const deUint8 d = numPartitions >= 4 ?	0x3f & (seed7*x + seed8*y + seed10*z + (rnum >>  2))	: 0;
+                seeds[0]  = (deUint8)(seed1  >> sh1);
+                seeds[1]  = (deUint8)(seed2  >> sh2);
+                seeds[2]  = (deUint8)(seed3  >> sh1);
+                seeds[3]  = (deUint8)(seed4  >> sh2);
+                seeds[4]  = (deUint8)(seed5  >> sh1);
+                seeds[5]  = (deUint8)(seed6  >> sh2);
+                seeds[6]  = (deUint8)(seed7  >> sh1);
+                seeds[7]  = (deUint8)(seed8  >> sh2);
+                seeds[8]  = (deUint8)(seed9  >> sh3);
+                seeds[9] = (deUint8)(seed10 >> sh3);
+                seeds[10] = (deUint8)(seed11 >> sh3);
+                seeds[11] = (deUint8)(seed12 >> sh3);
+                return rnum;
+            }
+
+            int computeTexelPartition (deUint8 * seeds,  deUint32 rnum, deUint32 xIn, deUint32 yIn, deUint32 zIn, int numPartitions)
+            {
+                const deUint8 a =						0x3f & (seeds[0]*xIn + seeds[1]*yIn + seeds[10]*zIn + (rnum >> 14));
+                const deUint8 b =						0x3f & (seeds[2]*xIn + seeds[3]*yIn + seeds[11]*zIn + (rnum >> 10));
+                const deUint8 c = numPartitions >= 3 ?	0x3f & (seeds[4]*xIn + seeds[5]*yIn + seeds[8]*zIn  + (rnum >>  6))	: 0;
+                const deUint8 d = numPartitions >= 4 ?	0x3f & (seeds[6]*xIn + seeds[7]*yIn + seeds[9]*zIn + (rnum >>  2))	: 0;
                 return a >= b && a >= c && a >= d	? 0
                                                      : b >= c && b >= d				? 1
                                                                                        : c >= d						? 2
@@ -1406,9 +1390,9 @@ namespace basisu
             DecompressResult setTexelColors (void* dst, ColorEndpointPair* colorEndpoints, TexelWeightPair* texelWeights, int ccs, deUint32 partitionIndexSeed,
                                              int numPartitions, int blockWidth, int blockHeight, bool isSRGB, bool isLDRMode, const deUint32* colorEndpointModes)
             {
-                const bool			smallBlock	= blockWidth*blockHeight < 31;
                 DecompressResult	result		= DECOMPRESS_RESULT_VALID_BLOCK;
                 bool				isHDREndpoint[4] = {false};
+
 //                for (int i = 0; i < numPartitions; i++)
 //                {
 //                    isHDREndpoint[i] = isColorEndpointModeHDR(colorEndpointModes[i]);
@@ -1417,30 +1401,43 @@ namespace basisu
 //                    if (isHDREndpoint[i])
 //                        return DECOMPRESS_RESULT_ERROR;
 //                }
+                // 提前计算好seeds
+                deUint8 seeds[12] = {0};
+                deUint32	rnum = 0;
+                if (numPartitions != 1){
+                    rnum = caculateSeeds(seeds,partitionIndexSeed,numPartitions);
+                }
+                deUint8 *ptrdist = (deUint8*)dst;
+                deUint8 SCALE	= blockWidth*blockHeight < 31 ? 2 : 1;
                 int				colorEndpointNdx;
                 for (deUint8 texelY = 0; texelY < blockHeight; texelY++)
                     for (deUint8 texelX = 0; texelX < blockWidth; texelX++)
                     {
-                        const deUint8				texelNdx			= texelY*blockWidth + texelX;
-                        colorEndpointNdx	= numPartitions == 1 ? 0 : computeTexelPartition(partitionIndexSeed, texelX, texelY, 0, numPartitions, smallBlock);
-                        const UVec4&			e0					= colorEndpoints[colorEndpointNdx].e0;
-                        const UVec4&			e1					= colorEndpoints[colorEndpointNdx].e1;
-                        const TexelWeightPair&	weight				= texelWeights[texelNdx];
-                        for (deUint8 channelNdx = 0; channelNdx < 4; channelNdx++)
-                        {
-                            if (!isHDREndpoint[colorEndpointNdx] || (channelNdx == 3 && colorEndpointModes[colorEndpointNdx] == 14)) // \note Alpha for mode 14 is treated the same as LDR.
-                            {
-                                const deUint32 w	= weight.w[ccs == channelNdx ? 1 : 0];
-                                if(isSRGB){
+                        const deUint8			texelNdx	    = texelY*blockWidth + texelX;
+                        colorEndpointNdx	= numPartitions == 1 ? 0 : computeTexelPartition(seeds, rnum, texelX * SCALE, texelY * SCALE, 0, numPartitions);
+                        const UVec4&			e0				= colorEndpoints[colorEndpointNdx].e0;
+                        const UVec4&			e1				= colorEndpoints[colorEndpointNdx].e1;
+                        const deUint16 *        weight_w        = texelWeights[texelNdx].w;
+                        if(isSRGB){
+                            for (deUint8 channelNdx = 0; channelNdx < 4; channelNdx++){
+                                if (!isHDREndpoint[colorEndpointNdx] || (channelNdx == 3 && colorEndpointModes[colorEndpointNdx] == 14)) // \note Alpha for mode 14 is treated the same as LDR.
+                                {
+                                    const deUint16 w	= weight_w[ccs == channelNdx ? 1 : 0];
                                     const deUint32 c0	= (e0[channelNdx] << 8) | 0x80;
-                                    const deUint32 c1	= (e1[channelNdx] << 8) | 0x80;
-                                    const deUint32 c	= (c0*(64-w) + c1*w + 32) >> 6;
-                                    ((deUint8*)dst)[texelNdx*4 + channelNdx] = (deUint8)((c & 0xff00) >> 8);
-                                }else{
+                                    deUint32 c1	= (e1[channelNdx] << 8) | 0x80;
+                                    c1	= (c0*(64-w) + c1*w + 32) >> 6;
+                                    ptrdist[texelNdx*4 + channelNdx] = (deUint8)((c1 & 0xff00) >> 8);
+                                }
+                            }
+                        }else{
+                            for (deUint8 channelNdx = 0; channelNdx < 4; channelNdx++) {
+                                if (!isHDREndpoint[colorEndpointNdx] || (channelNdx == 3 && colorEndpointModes[colorEndpointNdx] == 14)) // \note Alpha for mode 14 is treated the same as LDR.
+                                {
+                                    const deUint16 w	= weight_w[ccs == channelNdx ? 1 : 0];
                                     const deUint32 c0	= (e0[channelNdx] << 8) | e0[channelNdx];
-                                    const deUint32 c1	= (e1[channelNdx] << 8) | e1[channelNdx];
-                                    const deUint32 c	= (c0*(64-w) + c1*w + 32) >> 6;
-                                    ((float*)dst)[texelNdx*4 + channelNdx] = c == 65535 ? 1.0f : (float)c *BC_65536;
+                                    deUint32 c1	= (e1[channelNdx] << 8) | e1[channelNdx];
+                                    c1	= (c0*(64-w) + c1*w + 32) >> 6;
+                                    ptrdist[texelNdx*4 + channelNdx] = c1 == 65535 ? 255 : c1>>8;
                                 }
                             }
                         }
@@ -1452,10 +1449,10 @@ namespace basisu
          * 数据集
          */
             struct DataSet{
-                float linear[MAX_BLOCK_WIDTH * MAX_BLOCK_HEIGHT * 4];
+                deUint8 linear[MAX_BLOCK_WIDTH * MAX_BLOCK_HEIGHT * 4];
                 ASTCBlockMode blockMode;
-                ISEDecodedResult iseDecoded[64];
                 ColorEndpointPair colorEndpoints[4];
+                ISEDecodedResult iseDecoded[64];
                 TexelWeightPair texelWeights[MAX_BLOCK_WIDTH*MAX_BLOCK_HEIGHT];
             };
 
@@ -1548,30 +1545,34 @@ namespace basisu
             return ysize;
         }
 
-        bool decompress(DataSet &dataSet, uint8_t *pDst, const uint8_t * data, bool isSRGB, int blockWidth, int blockHeight)
+        bool decompress(DataSet &dataSet,  const uint8_t * data, int block_width,int block_height )
         {
             // rg - We only support LDR here, although adding back in HDR would be easy.
             const bool isLDR = true;
             const Block128 blockData(data);
-            float *linear = dataSet.linear;
-            if (decompressBlock(dataSet, isSRGB ? (void*)pDst : (void*)&linear[0],
-                                blockData, blockWidth, blockHeight, isSRGB, isLDR) != DECOMPRESS_RESULT_VALID_BLOCK){
+            DecompressResult result = decompressBlock(dataSet, (void*)&dataSet.linear[0],
+                                                      blockData,block_width, block_height,false, isLDR);
+            if ( result != DECOMPRESS_RESULT_VALID_BLOCK){
+                // decompress failed errorcode = result;
                 return false;
             }
-            /**
-            int pixk = 0;
-            int num = blockHeight * blockWidth;
-            for (int i=0;i<num;i++){
-                int pixc = pixk<<2;
-                pDst[pixc]     = (uint8_t)(basisu::clamp<int>((int)(linear[pixc] * 65536.0f + .5f), 0, 65535) >> 8);
-                pDst[pixc + 1] = (uint8_t)(basisu::clamp<int>((int)(linear[pixc + 1] * 65536.0f + .5f), 0, 65535) >> 8);
-                pDst[pixc + 2] = (uint8_t)(basisu::clamp<int>((int)(linear[pixc + 2] * 65536.0f + .5f), 0, 65535) >> 8);
-                pDst[pixc + 3] = (uint8_t)(basisu::clamp<int>((int)(linear[pixc + 3] * 65536.0f + .5f), 0, 65535) >> 8);
-                pixk++;
-            }
-             **/
             return true;
         }
+
+        bool decompressSRGB(DataSet &dataSet, uint8_t *pDst, const uint8_t * data,int block_width,int block_height )
+        {
+            // rg - We only support LDR here, although adding back in HDR would be easy.
+            const bool isLDR = true;
+            const Block128 blockData(data);
+            DecompressResult result =decompressBlock(dataSet, (void*)&pDst,
+                                                     blockData,block_width, block_height,true, isLDR);
+            if ( result != DECOMPRESS_RESULT_VALID_BLOCK){
+                // decompress failed errorcode = result;
+                return false;
+            }
+            return true;
+        }
+
         /**
          * 将ASTC格式的数据转换为RGBA格式的数据
          * @param astc_file_data ASTC格式的数据
@@ -1582,6 +1583,9 @@ namespace basisu
          * @return 转换后的RGBA格式的数据大小
          */
         uint32_t transferToRGBA(uint8_t *astc_file_data, uint32_t astc_file_size, unsigned char **outRGBA, uint32_t *outWidth, uint32_t *outHeight) {
+            if (astc_file_size < ASTC_HEADER_SIZE){
+                return 0;
+            }
             int width = astcGetWidth(astc_file_data);
             int height = astcGetHeight(astc_file_data);
             *outWidth = width;
@@ -1591,20 +1595,20 @@ namespace basisu
             uint32_t size_rgba = width * height << 2;
             uint8_t *data_rgba = static_cast<uint8_t *>(malloc(size_rgba * sizeof(uint8_t)));
             uint8_t k_size_in_bytes = 16;  // 每个ASTC块的大小（字节数）
-            uint8_t block_width = astc_file_data[ASTC_HEADER_MAGIC];  // ASTC块的宽度（像素数）
-            uint8_t block_height = astc_file_data[ASTC_HEADER_MAGIC + 1];  // ASTC块的高度（像素数）
-            uint8_t k_bytes_per_pixel_unorm8 = 4;  // 每个像素的字节数（RGBA格式）
-            uint8_t row_length = block_width * k_bytes_per_pixel_unorm8;  // 每行像素的字节数
+            const uint8_t block_width = astc_file_data[ASTC_HEADER_MAGIC];  // ASTC块的宽度（像素数）
+            const uint8_t block_height = astc_file_data[ASTC_HEADER_MAGIC + 1];  // ASTC块的高度（像素数）
+            const uint8_t k_bytes_per_pixel_unorm8 = 4;  // 每个像素的字节数（RGBA格式）
+            const uint8_t row_length = block_width * k_bytes_per_pixel_unorm8;  // 每行像素的字节数
 //            uint8_t block[block_width * block_height << 2];  // 存储解压后的ASTC块数据
-            int blocks_wide = (width + block_width - 1) / block_width;  // 一行多少个block块
+            const int blocks_wide = (width + block_width - 1) / block_width;  // 一行多少个block块
             int block_index = 0;  // 当前处理的ASTC块的索引
             // 临时对象
             DataSet dataSet;
-            float *linear = dataSet.linear;
+            deUint8 *linear = dataSet.linear;
             // astc数据块
             const uint8_t *astc_data = astc_file_data + ASTC_HEADER_SIZE;
             for (int i = 0; i < block_data_len; i += k_size_in_bytes) {
-                if (!decompress(dataSet, nullptr, &astc_data[i], false, block_width, block_height)) {
+                if (!decompress(dataSet, &astc_data[i],block_width,block_height )) {
                     // 转码失败
                     free(data_rgba);
                     data_rgba = nullptr;
@@ -1613,16 +1617,11 @@ namespace basisu
                 int block_x = block_index % blocks_wide;  // 当前ASTC块在图像中的x坐标
                 int block_y = block_index / blocks_wide;  // 当前ASTC块在图像中的y坐标
                 for (uint8_t j = 0; j < block_height; ++j) {
-                    int py = block_height * block_y + j;  // 当前像素在图像中的y坐标
-                    int px = block_width * block_x;  // 当前像素在图像中的x坐标
-                    int dst_pixel_pos = (py * width + px) * 4;  // 当前像素在输出数据中的位置
-                    int src_pixel_pos = (j * block_width) * 4;  // 当前像素在ASTC块中的位置
-                    uint8_t *dist = &data_rgba[dst_pixel_pos];
-                    float *src = &linear[src_pixel_pos];
-                    for (uint8_t t=0;t<row_length;++t){
-                        dist[t] =(uint8_t)(basisu::clamp<int>((int)(src[ t] * 65536.0f + .5f), 0, 65535) >> 8);
-                    }
-//                    memcpy(&data_rgba[dst_pixel_pos], &block[src_pixel_pos], row_length);  // 将当前像素的数据复制到输出数据中
+                    int temp1 = block_height * block_y + j;  // 当前像素在图像中的y坐标
+                    int temp2 = block_width * block_x;  // 当前像素在图像中的x坐标
+                    temp1 = (temp1 * width + temp2) << 2;  // 当前像素在输出数据中的位置
+                    temp2 = (j * block_width) << 2 ;  // 当前像素在ASTC块中的位置
+                    memcpy(&data_rgba[temp1], &linear[temp2], row_length);  // 将当前像素的数据复制到输出数据中
                 }
                 ++block_index;
             }
